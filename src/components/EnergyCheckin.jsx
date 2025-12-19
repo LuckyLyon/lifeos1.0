@@ -17,7 +17,9 @@ const EnergyCheckin = ({ onGenerate, onClose }) => {
     try {
       const saved = localStorage.getItem('lifeos-goals');
       if (saved) goals = JSON.parse(saved);
-    } catch (e) {}
+    } catch (error) {
+      console.error('Failed to load goals:', error);
+    }
 
     // 如果没目标，用默认 (带上时间)
     if (goals.length === 0) {

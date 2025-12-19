@@ -25,7 +25,9 @@ const DailyTimeline = ({ date, onBack }) => {
           const parsed = JSON.parse(saved).map(t => ({...t, duration: Number(t.duration) || 60 }));
           setTasks(parsed);
         } else { setTasks([]); }
-      } catch (e) {}
+      } catch (error) {
+        console.error('Failed to load tasks:', error);
+      }
     };
     loadTasks();
     const interval = setInterval(loadTasks, 2000); // 稍微放慢同步频率

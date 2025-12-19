@@ -6,6 +6,8 @@ import GoalManager from './components/GoalManager';
 import EnergyCheckin from './components/EnergyCheckin'; 
 import OnboardingWizard from './components/OnboardingWizard';
 import { Settings, Sparkles, BookOpen, Sun, Calendar as CalendarIcon, Bell, KeyRound, X, Save } from 'lucide-react';
+// ✅ 关键修复：引入 Hook
+import { useEnergy } from './contexts/useEnergy'; 
 
 const SettingsModal = ({ onClose }) => {
   const [apiKey, setApiKey] = useState('');
@@ -26,7 +28,10 @@ function App() {
   const [showGoalManager, setShowGoalManager] = useState(false);
   const [showEnergyCheckin, setShowEnergyCheckin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [currentMode, setCurrentMode] = useState('green');
+  
+  // ✅ 关键修复：使用 Context 替代本地 state
+  const { energyMode, setEnergyMode } = useEnergy();
+  
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); 
 
@@ -35,7 +40,6 @@ function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
 
-  // 🌟 V15 核心: 预测某天的模式 (Prediction Engine)
   const getPredictedMode = (dateStr) => {
     // 1. 如果当天已经有手动覆盖的记录，听记录的
     const saved = localStorage.getItem(`lifeos-daily-status-${dateStr}`);
@@ -44,33 +48,37 @@ function App() {
     // 2. 否则，查能量周期配置
     const profileStr = localStorage.getItem('lifeos-energy-profile');
     if (profileStr) {
-        const blueDays = JSON.parse(profileStr); // [2, 4]
-        const dayOfWeek = new Date(dateStr).getDay();
-        if (blueDays.includes(dayOfWeek)) return 'blue';
+        try {
+            const blueDays = JSON.parse(profileStr); 
+            // 🛡️ ✅ 核心修复：必须确认它是数组，才执行 includes
+            if (Array.isArray(blueDays)) {
+                const dayOfWeek = new Date(dateStr).getDay();
+                if (blueDays.includes(dayOfWeek)) return 'blue';
+            }
+        } catch (e) {
+            console.error("Energy profile parse error", e);
+        }
     }
-
-    // 3. 默认 Green
     return 'green';
   };
 
   const syncModeWithDate = (date) => {
     if (!date) return;
     const mode = getPredictedMode(date);
-    setCurrentMode(mode);
+    setEnergyMode(mode); 
   };
 
   const toggleMode = () => {
-    const newMode = currentMode === 'green' ? 'blue' : 'green';
+    const newMode = energyMode === 'green' ? 'blue' : 'green';
     const targetDate = selectedDate || getTodayString();
     
-    // 手动切换模式，强制更新
     updateTasksForMode(targetDate, newMode);
     
-    setCurrentMode(newMode);
+    setEnergyMode(newMode);
     setRefreshKey(prev => prev + 1);
   };
 
-  // 状态机变形逻辑 (V14.2 + V15)
+  // 状态机变形逻辑
   const updateTasksForMode = (dateStr, targetMode) => {
     const goalsStr = localStorage.getItem('lifeos-goals');
     if (!goalsStr) return; 
@@ -93,10 +101,9 @@ function App() {
     });
 
     let processedTasks = currentTasks.map(task => {
-        if (task.done) return task; // 已完成 -> 冻结
-        if (task.source === 'manual') return { ...task, type: targetMode }; // 手动 -> 变色
+        if (task.done) return task; 
+        if (task.source === 'manual') return { ...task, type: targetMode }; 
         
-        // 习惯 -> 变形
         if (task.source === 'habit' && task.goalId) {
             const goalConfig = activeGoals.find(g => g.id === task.goalId);
             if (goalConfig) {
@@ -137,17 +144,13 @@ function App() {
     });
 
     localStorage.setItem(storageKey, JSON.stringify(processedTasks));
-    // 🌟 关键：保存状态，以便日历和下次进入时记住
     localStorage.setItem(`lifeos-daily-status-${dateStr}`, targetMode);
   };
 
   const handleDateSelect = (date) => {
-    // 🌟 点击日期时，先预测（如果有记录读记录，没记录读周期）
     const mode = getPredictedMode(date);
-    // 然后根据预测结果生成任务
     updateTasksForMode(date, mode); 
-    
-    setCurrentMode(mode);
+    setEnergyMode(mode); 
     setSelectedDate(date);
     setShowGoalManager(false);
   };
@@ -156,7 +159,7 @@ function App() {
     const today = getTodayString();
     const targetDate = selectedDate || today; 
     updateTasksForMode(targetDate, mode); 
-    setCurrentMode(mode);
+    setEnergyMode(mode); 
     setRefreshKey(prev => prev + 1);
     if (!selectedDate) setSelectedDate(today); 
     setShowEnergyCheckin(false);
@@ -172,7 +175,6 @@ function App() {
         d.setDate(today.getDate() + i);
         const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         
-        // 导出时也使用预测逻辑，确保未来日期的蓝/绿是准确的
         const mode = getPredictedMode(dateStr);
         updateTasksForMode(dateStr, mode);
 
@@ -214,10 +216,9 @@ function App() {
     const savedGoals = localStorage.getItem('lifeos-goals');
     if (!savedGoals || savedGoals === '[]') { setShowOnboarding(true); return; }
     
-    // 初始化刷新
     const mode = getPredictedMode(today);
     updateTasksForMode(today, mode);
-    setCurrentMode(mode);
+    setEnergyMode(mode); 
     
     const lastCheckin = localStorage.getItem('lifeos-last-checkin');
     if (lastCheckin !== today) { setShowEnergyCheckin(true); }
@@ -232,10 +233,10 @@ function App() {
       setSelectedDate(null); 
       setShowGoalManager(false); 
       setShowEnergyCheckin(false); 
-      setCurrentMode(getPredictedMode(today)); 
+      setEnergyMode(getPredictedMode(today)); 
   };
   
-  const handleOnboardingComplete = () => { setShowOnboarding(false); const today = getTodayString(); setSelectedDate(today); setCurrentMode(getPredictedMode(today)); };
+  const handleOnboardingComplete = () => { setShowOnboarding(false); const today = getTodayString(); setSelectedDate(today); setEnergyMode(getPredictedMode(today)); };
 
   if (showOnboarding) return <OnboardingWizard onComplete={handleOnboardingComplete} />;
 
@@ -248,7 +249,6 @@ function App() {
     content = (
       <div className="flex flex-col items-center justify-center h-full space-y-10 animate-fadeIn p-6">
         <div className="w-full">
-            {/* 🌟 传入 getPredictedMode，让日历能够预测颜色 */}
             <CalendarStrip onSelectDate={handleDateSelect} getPredictedMode={getPredictedMode} />
         </div>
         <div className="grid grid-cols-1 gap-4 w-full max-w-xs">
@@ -261,7 +261,7 @@ function App() {
     );
   }
 
-  const themeClass = currentMode === 'blue' ? 'bg-blue-50' : 'bg-green-50';
+  const themeClass = energyMode === 'blue' ? 'bg-blue-50' : 'bg-green-50';
 
   return (
     <div className={`h-screen w-full flex justify-center overflow-hidden transition-colors duration-500 ${themeClass}`}>
@@ -271,7 +271,7 @@ function App() {
             <div><h1 className="text-2xl font-black text-slate-800 tracking-tight">LIFE REBOOT</h1><p className="text-xs text-slate-400 font-bold tracking-widest uppercase">System V15.1</p></div>
             <div className="flex items-center gap-2">
               <div onClick={toggleMode} className="cursor-pointer transition-transform active:scale-90">
-                 <ModeToggle mode={currentMode} />
+                 <ModeToggle mode={energyMode} />
               </div>
               <button onClick={handleRequestNotification} className="p-2.5 bg-rose-50 text-rose-500 rounded-xl shadow-sm hover:bg-rose-100 transition-colors"><Bell size={20} /></button>
               <button onClick={handleExportCalendar} className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shadow-sm hover:bg-indigo-100 transition-colors"><CalendarIcon size={20} /></button>
