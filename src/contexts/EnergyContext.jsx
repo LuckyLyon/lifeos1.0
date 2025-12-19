@@ -1,48 +1,25 @@
-import React, { createContext, useState, useEffect } from 'react'; 
+import React, { createContext, useState, useEffect } from 'react';
 
-// Create context
-const EnergyContext = createContext(); 
+// 1. 导出 Context 对象
+export const EnergyContext = createContext();
 
-// Energy Provider Component
-export function EnergyProvider({ children }) {
-  // Initialize energyMode from localStorage or default to 'green'
+// 2. 导出 Provider 组件 (核心发电机)
+export const EnergyProvider = ({ children }) => {
   const [energyMode, setEnergyMode] = useState(() => {
-    const saved = localStorage.getItem('lifeos-energy-mode');
-    return saved || 'green';
+    // 优先读取本地存储，读不到默认绿色
+    return localStorage.getItem('lifeos-mode') || 'green';
   });
-  
-  const [energyProfile, setEnergyProfile] = useState(() => {
-    const saved = localStorage.getItem('lifeos-energy-profile');
-    return saved ? JSON.parse(saved) : null;
-  });
-  
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('lifeos-api-key') || '');
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  
-  // Persist energyMode to localStorage
-  useEffect(() => {
-    localStorage.setItem('lifeos-energy-mode', energyMode);
-  }, [energyMode]);
-  
-  useEffect(() => { if (energyProfile) localStorage.setItem('lifeos-energy-profile', JSON.stringify(energyProfile)); }, [energyProfile]);
-  useEffect(() => { localStorage.setItem('lifeos-api-key', apiKey); }, [apiKey]);
-  
-  // Toggle energy mode function
-  const toggleMode = () => {
-    setEnergyMode(prevMode => prevMode === 'green' ? 'blue' : 'green');
-  };
-  
-  const getModeForDate = (dateObj) => {
-    if (!energyProfile) return 'green';
-    return energyProfile[dateObj.getDay()];
-  };
-  
-  const incrementRefreshTrigger = () => {
-    setRefreshTrigger(prev => prev + 1);
-  };
-  
-  return <EnergyContext.Provider value={{ energyMode, setEnergyMode, toggleMode, energyProfile, setEnergyProfile, getModeForDate, apiKey, setApiKey, refreshTrigger, incrementRefreshTrigger }}>{children}</EnergyContext.Provider>;
-} 
 
-// Export context for use in custom hooks
-export { EnergyContext };
+  useEffect(() => {
+    // 每次变色，保存到本地
+    localStorage.setItem('lifeos-mode', energyMode);
+    // 强制修改 body 背景色，防止白屏
+    document.body.className = energyMode === 'blue' ? 'bg-slate-900' : 'bg-green-50';
+  }, [energyMode]);
+
+  return (
+    <EnergyContext.Provider value={{ energyMode, setEnergyMode }}>
+      {children}
+    </EnergyContext.Provider>
+  );
+};

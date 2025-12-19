@@ -6,7 +6,8 @@ import GoalManager from './components/GoalManager';
 import EnergyCheckin from './components/EnergyCheckin'; 
 import OnboardingWizard from './components/OnboardingWizard';
 import { Settings, Sparkles, BookOpen, Sun, Calendar as CalendarIcon, Bell, KeyRound, X, Save } from 'lucide-react';
-// ✅ 关键修复：引入 Hook
+
+// ✅ 关键：必须带花括号 { }
 import { useEnergy } from './contexts/useEnergy'; 
 
 const SettingsModal = ({ onClose }) => {
@@ -29,7 +30,7 @@ function App() {
   const [showEnergyCheckin, setShowEnergyCheckin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   
-  // ✅ 关键修复：使用 Context 替代本地 state
+  // ✅ 获取状态
   const { energyMode, setEnergyMode } = useEnergy();
   
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -41,16 +42,13 @@ function App() {
   };
 
   const getPredictedMode = (dateStr) => {
-    // 1. 如果当天已经有手动覆盖的记录，听记录的
     const saved = localStorage.getItem(`lifeos-daily-status-${dateStr}`);
     if (saved) return saved;
 
-    // 2. 否则，查能量周期配置
     const profileStr = localStorage.getItem('lifeos-energy-profile');
     if (profileStr) {
         try {
             const blueDays = JSON.parse(profileStr); 
-            // 🛡️ ✅ 核心修复：必须确认它是数组，才执行 includes
             if (Array.isArray(blueDays)) {
                 const dayOfWeek = new Date(dateStr).getDay();
                 if (blueDays.includes(dayOfWeek)) return 'blue';
@@ -62,23 +60,14 @@ function App() {
     return 'green';
   };
 
-  const syncModeWithDate = (date) => {
-    if (!date) return;
-    const mode = getPredictedMode(date);
-    setEnergyMode(mode); 
-  };
-
   const toggleMode = () => {
     const newMode = energyMode === 'green' ? 'blue' : 'green';
     const targetDate = selectedDate || getTodayString();
-    
     updateTasksForMode(targetDate, newMode);
-    
     setEnergyMode(newMode);
     setRefreshKey(prev => prev + 1);
   };
 
-  // 状态机变形逻辑
   const updateTasksForMode = (dateStr, targetMode) => {
     const goalsStr = localStorage.getItem('lifeos-goals');
     if (!goalsStr) return; 
@@ -103,7 +92,6 @@ function App() {
     let processedTasks = currentTasks.map(task => {
         if (task.done) return task; 
         if (task.source === 'manual') return { ...task, type: targetMode }; 
-        
         if (task.source === 'habit' && task.goalId) {
             const goalConfig = activeGoals.find(g => g.id === task.goalId);
             if (goalConfig) {
@@ -124,7 +112,6 @@ function App() {
         if (!existingGoalIds.includes(g.id)) {
             let defaultTimeStr = g.time;
             if (!defaultTimeStr) { const h = 9 + idx; defaultTimeStr = `${h < 10 ? '0'+h : h}:00`; }
-            
             processedTasks.push({
                 id: Date.now() + idx + Math.random(), 
                 goalId: g.id, 
@@ -174,10 +161,8 @@ function App() {
         const d = new Date(today);
         d.setDate(today.getDate() + i);
         const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        
         const mode = getPredictedMode(dateStr);
         updateTasksForMode(dateStr, mode);
-
         const savedTasks = localStorage.getItem(`lifeos-tasks-day-${dateStr}`);
         if (savedTasks) {
             const tasks = JSON.parse(savedTasks);

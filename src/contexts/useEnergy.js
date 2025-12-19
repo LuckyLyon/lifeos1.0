@@ -1,6 +1,7 @@
 import { useContext } from 'react';
 import { EnergyContext } from './EnergyContext';
 
+// 导出名为 useEnergy 的工具
 export function useEnergy() {
   const context = useContext(EnergyContext);
   if (!context) {
