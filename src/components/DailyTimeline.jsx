@@ -1,37 +1,102 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Plus, Trash2, Clock, Hourglass, X, Check, ChevronDown, GripHorizontal, Square, CheckSquare, MessageSquare } from 'lucide-react';
 
-const PIXELS_PER_MINUTE = 2; 
+const PIXELS_PER_MINUTE = 2; // 🟢 移动端优化：大比例尺
 
 const DailyTimeline = ({ date, onBack }) => {
   const [tasks, setTasks] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
   
-  // 🟢 1. 复盘弹窗的状态 (必须有这个)
+  // 🟢 复盘弹窗状态
   const [checkinTask, setCheckinTask] = useState(null); 
   const [reviewText, setReviewText] = useState(""); 
 
-  // 拖拽相关
+  // 🟢 拖拽相关状态
   const [isDragging, setIsDragging] = useState(false);
   const dragItemRef = useRef(null);
   const dragStartY = useRef(0);
   const originalTaskTop = useRef(0);
   const hasMoved = useRef(false);
 
+  // 🟢 核心功能 1：自动同步 GoalManager 的目标
   useEffect(() => {
-    const loadTasks = () => {
+    const loadAndSyncTasks = () => {
       const storageKey = `lifeos-tasks-day-${date}`;
+      let currentTasks = [];
+      
+      // 1. 读取今日现有任务
       try {
         const saved = localStorage.getItem(storageKey);
-        setTasks(saved ? JSON.parse(saved) : []);
+        if (saved) currentTasks = JSON.parse(saved);
       } catch (e) { console.error(e); }
+
+      // 2. 读取 GoalManager 的习惯配置
+      try {
+        const allGoals = JSON.parse(localStorage.getItem('lifeos-goals') || '[]');
+        const dayOfWeek = new Date(date).getDay(); // 0=周日, 1=周一...
+        
+        // 3. 筛选今日目标
+        const todaysGoals = allGoals.filter(g => {
+            if (!g.frequency) return true; // 兼容旧数据
+            return g.frequency.includes(dayOfWeek);
+        });
+
+        let hasNewData = false;
+        
+        // 4. 注入缺少的任务
+        todaysGoals.forEach(goal => {
+            // 防止重复：检查 ID 或 标题
+            const exists = currentTasks.find(t => t.goalId === goal.id || t.text === goal.title);
+            if (!exists) {
+                currentTasks.push({
+                    id: Date.now() + Math.random(),
+                    goalId: goal.id, // 绑定 ID 以便同步状态
+                    text: goal.title,
+                    time: goal.time || '09:00',
+                    duration: 60,
+                    type: 'green',
+                    done: false,
+                    review: ""
+                });
+                hasNewData = true;
+            }
+        });
+
+        // 5. 保存并排序
+        if (hasNewData) {
+            currentTasks.sort((a, b) => a.time.localeCompare(b.time));
+            localStorage.setItem(storageKey, JSON.stringify(currentTasks));
+        }
+        
+      } catch (e) { console.error("Sync failed", e); }
+
+      setTasks(currentTasks);
     };
-    loadTasks();
+
+    loadAndSyncTasks();
   }, [date]);
 
   const saveTasksToStorage = (newTasks) => {
     setTasks(newTasks);
     localStorage.setItem(`lifeos-tasks-day-${date}`, JSON.stringify(newTasks));
+  };
+
+  // 🟢 核心功能 2：点击网格空白处新建任务
+  const handleGridClick = (hour) => {
+    const timeStr = `${String(hour).padStart(2, '0')}:00`;
+    const newTask = {
+      id: Date.now(),
+      text: "新任务",
+      time: timeStr, // 使用点击的时间
+      duration: 60,
+      type: 'green',
+      source: 'manual',
+      done: false,
+      review: "" 
+    };
+    const newTasks = [...tasks, newTask];
+    saveTasksToStorage(newTasks);
+    setEditingTask(newTask); // 创建后直接打开编辑
   };
 
   const handleAddTask = () => {
@@ -65,33 +130,32 @@ const DailyTimeline = ({ date, onBack }) => {
     setEditingTask(null);
   };
 
-  // 🟢 2. 核心逻辑：点击复选框 -> 打开弹窗 (而不是直接完成)
+  // 🟢 核心功能 3：打卡逻辑 (复盘弹窗)
   const handleCheckClick = (e, task) => {
-    e.stopPropagation(); // 阻止冒泡，防止触发卡片点击
-    
+    e.stopPropagation(); 
     if (task.done) {
-        // 如果已经是完成状态，直接取消完成（不需要弹窗）
+        // 已完成 -> 直接取消
         handleUpdateTask(task.id, { done: false });
     } else {
-        // 🟢 如果是未完成，打开弹窗！
+        // 未完成 -> 弹出复盘
         setReviewText(task.review || ""); 
         setCheckinTask(task);
     }
   };
 
-  // 🟢 3. 确认打卡并保存复盘
+  // 确认打卡
   const confirmCheckin = () => {
     if (checkinTask) {
         handleUpdateTask(checkinTask.id, { 
             done: true, 
-            review: reviewText // 保存心得
+            review: reviewText 
         });
         setCheckinTask(null);
         setReviewText("");
     }
   };
 
-  // 拖拽逻辑
+  // 🟢 核心功能 5：电脑端拖拽逻辑
   const handleMouseDown = (e, task) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -154,20 +218,27 @@ const DailyTimeline = ({ date, onBack }) => {
       </div>
 
       <div className="flex-1 overflow-y-auto relative pb-40 select-none" style={{ minHeight: '1200px' }}>
-        <div className="absolute inset-0 pointer-events-none">
+        {/* 网格层 (可点击新建) */}
+        <div className="absolute inset-0 z-0">
           {hours.map(hour => (
-            <div key={hour} className="border-b border-slate-100 flex items-start group" style={{ height: `${60 * PIXELS_PER_MINUTE}px` }}>
-              <span className="text-xs font-mono text-slate-400 w-14 text-right pr-4 -mt-2 group-hover:text-slate-600">
+            <div 
+                key={hour} 
+                onClick={() => handleGridClick(hour)} // 🟢 点击事件绑定
+                className="border-b border-slate-100 flex items-start group hover:bg-slate-50 active:bg-blue-50 transition-colors cursor-pointer" 
+                style={{ height: `${60 * PIXELS_PER_MINUTE}px` }}
+            >
+              <span className="text-xs font-mono text-slate-400 w-14 text-right pr-4 -mt-2 group-hover:text-slate-600 pointer-events-none">
                 {String(hour).padStart(2, '0')}:00
               </span>
-              <div className="flex-1 h-full relative border-l border-slate-100">
+              <div className="flex-1 h-full relative border-l border-slate-100 pointer-events-none">
                  <div className="absolute top-1/2 left-0 right-0 border-t border-slate-50 border-dashed"></div>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="absolute top-0 left-14 right-4 bottom-0">
+        {/* 任务层 */}
+        <div className="absolute top-0 left-14 right-4 bottom-0 z-10 pointer-events-none">
           {tasks.map(task => {
             const [h, m] = task.time.split(':').map(Number);
             if (h < 5) return null;
@@ -175,7 +246,7 @@ const DailyTimeline = ({ date, onBack }) => {
             const top = startMinutes * PIXELS_PER_MINUTE;
             const height = task.duration * PIXELS_PER_MINUTE;
             const isBlue = task.type === 'blue';
-            const isShort = task.duration <= 30;
+            const isShort = task.duration <= 30; // 🟢 移动端短任务优化
 
             return (
               <div
@@ -183,14 +254,14 @@ const DailyTimeline = ({ date, onBack }) => {
                 onMouseDown={(e) => handleMouseDown(e, task)}
                 onClick={() => handleTaskClick(task)}
                 style={{ top: `${top}px`, height: `${height}px` }}
-                className={`absolute left-0 right-0 rounded-lg px-3 border-l-4 shadow-sm cursor-pointer transition-all
+                className={`absolute left-0 right-0 rounded-lg px-3 border-l-4 shadow-sm cursor-pointer transition-all pointer-events-auto 
                   ${isDragging && dragItemRef.current?.id === task.id ? 'z-50 shadow-2xl opacity-90 scale-[1.02]' : 'z-10'}
                   ${isBlue ? 'bg-blue-50 border-blue-500 text-slate-700' : 'bg-green-50 border-green-500 text-slate-700'}
                   ${task.done ? 'opacity-60 grayscale' : ''} 
                   hover:brightness-95 hover:shadow-md flex flex-col justify-center overflow-hidden pr-10
                 `}
               >
-                {/* 🟢 4. 关键：这里的 onClick 绑定的是 handleCheckClick */}
+                {/* 打卡按钮 */}
                 <div 
                     onClick={(e) => handleCheckClick(e, task)}
                     className="absolute top-2 right-2 p-2 -m-2 z-20 hover:scale-110 transition-transform cursor-pointer"
@@ -234,7 +305,7 @@ const DailyTimeline = ({ date, onBack }) => {
 
       <button onClick={handleAddTask} className="absolute bottom-6 right-6 w-14 h-14 bg-slate-800 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-700 active:scale-90 z-30"><Plus size={28} /></button>
 
-      {/* 🟢 5. 复盘弹窗 UI 组件 (必须在 return 里) */}
+      {/* 复盘弹窗 */}
       {checkinTask && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fadeIn p-6">
             <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 animate-slideUp">
@@ -274,7 +345,7 @@ const DailyTimeline = ({ date, onBack }) => {
         </div>
       )}
 
-      {/* 普通编辑弹窗 */}
+      {/* 编辑弹窗 */}
       {editingTask && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/20 backdrop-blur-sm animate-fadeIn">
           <div className="absolute inset-0" onClick={() => setEditingTask(null)}></div>
