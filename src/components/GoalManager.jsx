@@ -1,33 +1,41 @@
 import React, { useState, useEffect } from 'react';
+[cite_start]// 1. 保留你原版的所有图标引用 [cite: 1]
 import { ArrowLeft, Plus, Trash2, Zap, BatteryCharging, Clock, Save, X, Bot, ChevronDown, ChevronUp, History, Calendar, Star, TrendingUp, Repeat, KeyRound, CheckCircle2 } from 'lucide-react';
+[cite_start]// 2. 保留 AI 工具引用 [cite: 2]
 import { generateHabitPlan } from '../utils/ai';
 
 const GoalManager = ({ onBack }) => {
   const [goals, setGoals] = useState([]);
+  
+  // --- 🟢 新增：动态统计状态 (用于同步 DailyTimeline 的数据) ---
+  const [stats, setStats] = useState({}); 
+
+  [cite_start]// --- 🟡 保留：原来的 UI 状态 (添加模式、展开、AI 等) [cite: 3-6] ---
   const [isAdding, setIsAdding] = useState(false);
   const [addMode, setAddMode] = useState('manual'); 
   const [expandedId, setExpandedId] = useState(null);
   const [showSettingsHint, setShowSettingsHint] = useState(false);
-
-  // Form State
+  
+  // 表单状态
   const [title, setTitle] = useState('');
   const [green, setGreen] = useState('');
   const [blue, setBlue] = useState('');
   const [time, setTime] = useState('09:00');
   const [selectedDays, setSelectedDays] = useState([0,1,2,3,4,5,6]); 
   
-  // AI State
+  // AI 状态
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiError, setAiError] = useState(null);
 
+  // --- 🟢 核心修改：加载时同时计算统计数据 ---
   useEffect(() => {
     const loadGoals = () => {
       try {
         const saved = localStorage.getItem('lifeos-goals');
         if (saved) {
             let parsed = JSON.parse(saved);
-            // 数据清洗
+            [cite_start]// 原版的数据清洗逻辑 [cite: 8]
             parsed = parsed.map(g => {
                 if (!Array.isArray(g.frequency)) {
                     if (g.frequency === 'workdays') g.frequency = [1,2,3,4,5];
@@ -37,6 +45,7 @@ const GoalManager = ({ onBack }) => {
                 return g;
             });
             setGoals(parsed);
+            calculateAllStats(parsed); // 👈 立即触发统计计算
         }
       } catch (e) {
           console.error("Load goals failed", e);
@@ -45,11 +54,65 @@ const GoalManager = ({ onBack }) => {
     loadGoals();
   }, []);
 
+  // --- 🟢 新增：智能统计引擎 (自动扫描过去30天的打卡文件) ---
+  const calculateAllStats = (currentGoals) => {
+    const newStats = {};
+    const today = new Date();
+
+    currentGoals.forEach(goal => {
+      let streak = 0;
+      let history = []; // 存放最近的历史记录
+      let foundBreak = false;
+
+      // 扫描过去 30 天
+      for (let i = 0; i < 30; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        
+        // 读取那天的任务文件
+        const dayData = localStorage.getItem(`lifeos-tasks-day-${dateStr}`);
+        let isDone = false;
+        let review = ""; 
+        let energyMode = "green"; // 默认为 green，用于显示颜色
+
+        if (dayData) {
+          const tasks = JSON.parse(dayData);
+          const task = tasks.find(t => t.goalId === goal.id);
+          // 获取当天的模式
+          energyMode = localStorage.getItem(`lifeos-daily-status-${dateStr}`) || 'green';
+
+          if (task && task.done) {
+            isDone = true;
+            review = task.review || "";
+          }
+        }
+
+        // 存入历史 (只保留最近14天用于UI显示)
+        if (i < 14) {
+          history.unshift({ date: dateStr, done: isDone, review, energyMode }); 
+        }
+
+        // 计算连胜
+        if (isDone) {
+          if (!foundBreak) streak++;
+        } else if (i > 0) {
+           // 如果不是今天且没做，打断连胜
+           foundBreak = true;
+        }
+      }
+      newStats[goal.id] = { streak, history };
+    });
+    setStats(newStats);
+  };
+
   const saveToStorage = (updatedGoals) => {
     setGoals(updatedGoals);
     localStorage.setItem('lifeos-goals', JSON.stringify(updatedGoals));
+    calculateAllStats(updatedGoals); // 保存后刷新统计
   };
 
+  [cite_start]// --- 🟡 保留：AI 生成逻辑 [cite: 11-16] ---
   const handleAIGenerate = async () => {
     if (!aiPrompt) return;
     const apiKey = localStorage.getItem('lifeos-api-key');
@@ -58,10 +121,8 @@ const GoalManager = ({ onBack }) => {
       setShowSettingsHint(true);
       return;
     }
-
     setIsGenerating(true);
     setAiError(null);
-
     try {
       const data = await generateHabitPlan(apiKey, aiPrompt);
       setTitle(data.title);
@@ -77,6 +138,7 @@ const GoalManager = ({ onBack }) => {
     }
   };
 
+  [cite_start]// --- 🟡 保留：手动保存逻辑 [cite: 17-21] ---
   const handleSave = () => {
     if (!title || !green || !blue) return;
     if (selectedDays.length === 0) {
@@ -89,16 +151,17 @@ const GoalManager = ({ onBack }) => {
       title, green, blue, time,
       frequency: selectedDays, 
       milestones: window.tempAiData?.milestones || [],
-      streak: 0,
-      history: [] 
+      // 注意：这里不再依赖 goal.streak 存储数据，而是靠 calculateAllStats 动态计算
     };
+
     const updated = [...goals, newGoal];
     saveToStorage(updated);
     setIsAdding(false); resetForm();
   };
 
   const resetForm = () => {
-    setTitle(''); setGreen(''); setBlue(''); setTime('09:00');
+    setTitle(''); setGreen('');
+    setBlue(''); setTime('09:00');
     setSelectedDays([0,1,2,3,4,5,6]); 
     setAiPrompt(''); setAddMode('manual'); window.tempAiData = null; setAiError(null);
   };
@@ -130,6 +193,7 @@ const GoalManager = ({ onBack }) => {
     return '周' + days.map(d => map[d]).join('、');
   };
 
+  [cite_start]// 获取最近14天日期 (用于渲染空占位符) [cite: 29]
   const getLast14Days = () => {
     const dates = [];
     for (let i = 13; i >= 0; i--) {
@@ -139,9 +203,9 @@ const GoalManager = ({ onBack }) => {
     }
     return dates;
   };
-  
-  const handleOpenSettings = () => { alert("请点击主页（返回上一页）右上角的齿轮图标 ⚙️ 进行设置"); };
 
+  const handleOpenSettings = () => { alert("请点击主页（返回上一页）右上角的齿轮图标 ⚙️ 进行设置"); };
+  
   const weekDays = [
     {id: 1, label: '一'}, {id: 2, label: '二'}, {id: 3, label: '三'}, {id: 4, label: '四'}, 
     {id: 5, label: '五'}, {id: 6, label: '六'}, {id: 0, label: '日'}
@@ -157,7 +221,7 @@ const GoalManager = ({ onBack }) => {
         <div className="w-16"></div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar pb-24">
         {goals.length === 0 && !isAdding && (
           <div className="text-center py-20 opacity-50 space-y-4">
             <TrendingUp size={48} className="mx-auto text-slate-300"/>
@@ -167,7 +231,8 @@ const GoalManager = ({ onBack }) => {
 
         {goals.map(goal => {
           const isExpanded = expandedId === goal.id;
-          const history = goal.history || [];
+          // 🟢 关键：从 stats 中获取动态数据，而不是用 goal.history
+          const goalStats = stats[goal.id] || { streak: 0, history: [] };
           const last14Days = getLast14Days();
           
           return (
@@ -176,6 +241,7 @@ const GoalManager = ({ onBack }) => {
               onClick={() => toggleExpand(goal.id)}
               className={`bg-white rounded-3xl shadow-sm border border-slate-100 relative group overflow-hidden transition-all duration-300 cursor-pointer hover:shadow-md ${isExpanded ? 'ring-2 ring-slate-800' : ''}`}
             >
+              {/* 卡片头部 */}
               <div className="p-6 relative z-10">
                 <div className="flex justify-between items-start mb-4">
                   <div className="space-y-1">
@@ -187,7 +253,8 @@ const GoalManager = ({ onBack }) => {
                           <span className="flex items-center gap-1"><Clock size={12}/> {goal.time}</span>
                           <span className="flex items-center gap-1"><Repeat size={12}/> {formatFreq(goal.frequency)}</span>
                           <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                          <span className="text-amber-500 flex items-center gap-1"><Zap size={12}/> {goal.streak || 0} 连胜</span>
+                          {/* 🟢 显示动态连胜 */}
+                          <span className="text-amber-500 flex items-center gap-1"><Zap size={12}/> {goalStats.streak} 连胜</span>
                       </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -202,29 +269,40 @@ const GoalManager = ({ onBack }) => {
                     <div className="text-sm font-bold text-slate-700 truncate">{goal.green}</div>
                   </div>
                   <div className="p-3 rounded-xl bg-blue-50/80 border border-blue-100 flex items-center gap-3">
-                    <div className="text-[10px] font-bold text-blue-500 uppercase shrink-0">Blue</div>
+                     <div className="text-[10px] font-bold text-blue-500 uppercase shrink-0">Blue</div>
                     <div className="text-sm font-bold text-slate-700 truncate">{goal.blue}</div>
                   </div>
                 </div>
               </div>
 
+              {/* 展开区域 */}
               {isExpanded && (
                 <div className="bg-slate-50 border-t border-slate-100 p-6 animate-slideDown">
-                   {/* 1. 最近状态 */}
+                   {/* 1. 最近状态 (动态渲染) */}
                    <div className="mb-6">
                       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><TrendingUp size={14}/> 最近状态 (14天)</h4>
                       <div className="flex gap-1.5 justify-between">
                           {last14Days.map(date => {
-                             const record = history.find(h => h.date === date);
+                             // 🟢 在历史记录里找这一天
+                             const record = goalStats.history.find(h => h.date === date);
                              let bgClass = "bg-slate-200"; 
-                             if (record) bgClass = record.energy_mode === 'blue' ? 'bg-blue-400' : 'bg-green-500';
+                             if (record && record.done) {
+                                 // 根据当天的模式显示颜色 (修复)
+                                 bgClass = record.energy_mode === 'blue' ? 'bg-blue-400' : 'bg-green-500';
+                             }
                              const isToday = date === new Date().toISOString().split('T')[0];
-                             return (<div key={date} className="flex flex-col items-center gap-1 w-full"><div className={`w-full aspect-square rounded-md ${bgClass} transition-all ${isToday ? 'ring-2 ring-slate-800 ring-offset-2' : ''}`} title={`${date}: ${record ? (record.energy_mode + ' mode') : 'Missed'}`}></div></div>)
+                             return (
+                                <div key={date} className="flex flex-col items-center gap-1 w-full">
+                                    <div className={`w-full aspect-square rounded-md ${bgClass} transition-all ${isToday ? 'ring-2 ring-slate-800 ring-offset-2' : ''}`} 
+                                         title={`${date}: ${record?.done ? 'Done' : 'Missed'}`}>
+                                    </div>
+                                </div>
+                             )
                           })}
                       </div>
                    </div>
 
-                   {/* 2. AI 规划路径 */}
+                   {/* 2. AI 规划路径 (原版保留) */}
                    {goal.milestones?.length > 0 && (
                       <div className="mt-6 pt-6 border-t border-slate-200/50">
                         <div className="flex items-center gap-2 text-xs font-bold text-purple-600 mb-3 uppercase tracking-wider"><Bot size={12}/> AI 规划路径</div>
@@ -232,34 +310,42 @@ const GoalManager = ({ onBack }) => {
                       </div>
                    )}
 
-                   {/* 3. 详细打卡记录 (新回归！) */}
+                   {/* 3. 详细复盘记录 (🟢 新增功能：显示复盘文字) */}
                    <div className="mt-6 pt-6 border-t border-slate-200/50">
                       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><History size={14}/> 详细复盘</h4>
-                      {history.length === 0 ? (
+                      {goalStats.history.filter(h => h.done).length === 0 ? (
                         <div className="text-center py-4 text-slate-400 text-sm">暂无打卡记录</div>
                       ) : (
                         <div className="space-y-3">
-                          {[...history].reverse().map((record, idx) => (
-                            <div key={idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-2">
+                          {[...goalStats.history].filter(h => h.done).map((record, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-2 animate-fadeIn">
                                <div className="flex justify-between items-center">
                                   <div className="flex items-center gap-2">
                                     <div className="text-xs font-mono font-bold text-slate-400 flex items-center gap-1"><Calendar size={12}/> {record.date}</div>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${record.energy_mode === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>{record.energy_mode === 'blue' ? 'Recovery' : 'Growth'}</span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${record.energy_mode === 'blue' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+                                        {record.energy_mode === 'blue' ? 'Recovery' : 'Growth'}
+                                    </span>
                                   </div>
-                                  <div className="flex gap-0.5">{[...Array(record.rating || 5)].map((_, i) => <Star key={i} size={10} className="fill-amber-400 text-amber-400"/>)}</div>
+                                  <CheckCircle2 size={14} className="text-green-500"/>
                                </div>
-                               {record.review && (<div className="text-xs text-slate-600 bg-slate-50 p-2 rounded-lg italic border-l-2 border-slate-300">"{record.review}"</div>)}
+                               {/* 显示复盘文字 */}
+                               {record.review ? (
+                                   <div className="text-xs text-slate-700 bg-slate-50 p-2 rounded-lg italic border-l-2 border-slate-300">"{record.review}"</div>
+                               ) : (
+                                   <div className="text-[10px] text-slate-300 pl-1">完成任务</div>
+                               )}
                             </div>
                           ))}
                         </div>
                       )}
                    </div>
-                </div>
+               </div>
               )}
             </div>
           );
         })}
 
+        [cite_start]{/* --- 🟡 保留：添加目标的表单界面 (Add Form) --- [cite: 60-76] */}
         {isAdding && (
           <div className="bg-white rounded-3xl p-6 shadow-xl border-2 border-slate-800 animate-slideUp">
              <div className="flex justify-between items-center mb-6">
@@ -273,7 +359,7 @@ const GoalManager = ({ onBack }) => {
                <div className="space-y-6 py-4">
                   <div className="text-center space-y-2"><div className="w-12 h-12 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-2"><Bot size={28}/></div><h3 className="text-lg font-bold text-slate-800">AI 智能规划 (V13.0)</h3><p className="text-xs text-slate-400">接入 SiliconFlow/DeepSeek，为你量身定制蓝绿双态目标。</p></div>
                   <input value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} placeholder="例如: 3个月内减重10斤 / 学习Python爬虫..." className="w-full p-4 bg-slate-50 rounded-xl font-bold text-slate-700 focus:ring-2 focus:ring-purple-200 outline-none transition-all" autoFocus />
-                  {aiError && (<div className="p-3 bg-red-50 text-red-500 text-xs rounded-xl flex items-center gap-2 animate-pulse"><KeyRound size={14}/> {aiError}</div>)}
+                   {aiError && (<div className="p-3 bg-red-50 text-red-500 text-xs rounded-xl flex items-center gap-2 animate-pulse"><KeyRound size={14}/> {aiError}</div>)}
                   {showSettingsHint && (<div className="text-center text-xs text-blue-500 underline cursor-pointer" onClick={handleOpenSettings}>不知道去哪里填 Key? 点我提示</div>)}
                   <button onClick={handleAIGenerate} disabled={isGenerating || !aiPrompt} className="w-full py-4 bg-slate-800 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-purple-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed">{isGenerating ? <span className="animate-pulse">正在连接大脑...</span> : <><Zap size={18}/> 生成方案</>}</button>
                </div>
@@ -281,7 +367,7 @@ const GoalManager = ({ onBack }) => {
                <div className="space-y-4">
                   <div className="flex gap-3">
                       <div className="flex-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1 block">目标名称</label>
+                           <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1 block">目标名称</label>
                           <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如: 练出腹肌" className="w-full p-3 bg-slate-50 rounded-xl font-bold text-slate-700 outline-none focus:bg-white focus:ring-2 focus:ring-slate-200 transition-all"/>
                       </div>
                       <div className="w-1/3">
@@ -297,7 +383,7 @@ const GoalManager = ({ onBack }) => {
                           return (
                             <button key={day.id} onClick={() => toggleDay(day.id)} className={`w-10 h-10 rounded-full text-xs font-bold transition-all border flex items-center justify-center ${isSelected ? 'bg-slate-800 text-white border-slate-800 shadow-lg transform -translate-y-1' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
                               {day.label}
-                              {isSelected && <div className="absolute -bottom-1 w-1 h-1 bg-green-400 rounded-full"></div>}
+                               {isSelected && <div className="absolute -bottom-1 w-1 h-1 bg-green-400 rounded-full"></div>}
                             </button>
                           )
                         })}
@@ -320,4 +406,5 @@ const GoalManager = ({ onBack }) => {
     </div>
   );
 };
+
 export default GoalManager;
