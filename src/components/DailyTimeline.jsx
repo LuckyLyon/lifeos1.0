@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Plus, Trash2, Clock, Hourglass, X, Check, ChevronDown, GripHorizontal, Square, CheckSquare } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Clock, Hourglass, X, Check, ChevronDown, GripHorizontal, Square, CheckSquare, MessageSquare } from 'lucide-react';
 
-const PIXELS_PER_MINUTE = 2; // 1分钟=2px
+const PIXELS_PER_MINUTE = 2; 
 
 const DailyTimeline = ({ date, onBack }) => {
   const [tasks, setTasks] = useState([]);
   const [editingTask, setEditingTask] = useState(null);
   
-  // 拖拽相关状态
+  // 🟢 1. 复盘弹窗的状态 (必须有这个)
+  const [checkinTask, setCheckinTask] = useState(null); 
+  const [reviewText, setReviewText] = useState(""); 
+
+  // 拖拽相关
   const [isDragging, setIsDragging] = useState(false);
   const dragItemRef = useRef(null);
   const dragStartY = useRef(0);
@@ -38,7 +42,8 @@ const DailyTimeline = ({ date, onBack }) => {
       duration: 60,
       type: 'green',
       source: 'manual',
-      done: false // ✅ 默认未完成
+      done: false,
+      review: "" 
     };
     const newTasks = [...tasks, newTask];
     saveTasksToStorage(newTasks);
@@ -48,8 +53,9 @@ const DailyTimeline = ({ date, onBack }) => {
   const handleUpdateTask = (taskId, updates) => {
     const newTasks = tasks.map(t => t.id === taskId ? { ...t, ...updates } : t);
     saveTasksToStorage(newTasks);
-    // 如果正在编辑这个任务，也要同步更新编辑框的状态
-    setEditingTask(prev => prev && prev.id === taskId ? ({ ...prev, ...updates }) : prev);
+    if (editingTask && editingTask.id === taskId) {
+        setEditingTask(prev => ({ ...prev, ...updates }));
+    }
   };
 
   const handleDeleteTask = (taskId) => {
@@ -59,25 +65,42 @@ const DailyTimeline = ({ date, onBack }) => {
     setEditingTask(null);
   };
 
-  // 🟢 新增：快速打卡切换 (Quick Check-in)
-  const toggleTaskDone = (e, task) => {
-    e.stopPropagation(); // 阻止冒泡！防止点打卡时弹出编辑框
-    handleUpdateTask(task.id, { done: !task.done });
+  // 🟢 2. 核心逻辑：点击复选框 -> 打开弹窗 (而不是直接完成)
+  const handleCheckClick = (e, task) => {
+    e.stopPropagation(); // 阻止冒泡，防止触发卡片点击
+    
+    if (task.done) {
+        // 如果已经是完成状态，直接取消完成（不需要弹窗）
+        handleUpdateTask(task.id, { done: false });
+    } else {
+        // 🟢 如果是未完成，打开弹窗！
+        setReviewText(task.review || ""); 
+        setCheckinTask(task);
+    }
   };
 
-  // --- 🖱️ 电脑端拖拽逻辑 ---
+  // 🟢 3. 确认打卡并保存复盘
+  const confirmCheckin = () => {
+    if (checkinTask) {
+        handleUpdateTask(checkinTask.id, { 
+            done: true, 
+            review: reviewText // 保存心得
+        });
+        setCheckinTask(null);
+        setReviewText("");
+    }
+  };
+
+  // 拖拽逻辑
   const handleMouseDown = (e, task) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     dragItemRef.current = task;
     dragStartY.current = e.clientY;
-    
     const [h, m] = task.time.split(':').map(Number);
     originalTaskTop.current = ((h - 5) * 60 + m) * PIXELS_PER_MINUTE;
-    
     hasMoved.current = false;
     setIsDragging(true);
-
     window.addEventListener('mousemove', handleWindowMouseMove);
     window.addEventListener('mouseup', handleWindowMouseUp);
   };
@@ -86,28 +109,21 @@ const DailyTimeline = ({ date, onBack }) => {
     if (!dragItemRef.current) return;
     const deltaY = e.clientY - dragStartY.current;
     if (Math.abs(deltaY) > 5) hasMoved.current = true;
-
     let newTop = originalTaskTop.current + deltaY;
     const snapSize = 15 * PIXELS_PER_MINUTE; 
     newTop = Math.round(newTop / snapSize) * snapSize;
-
     const maxTop = 19 * 60 * PIXELS_PER_MINUTE - (dragItemRef.current.duration * PIXELS_PER_MINUTE);
     newTop = Math.max(0, Math.min(newTop, maxTop));
-
     const totalMinutesFrom5AM = newTop / PIXELS_PER_MINUTE;
     const hour = Math.floor(totalMinutesFrom5AM / 60) + 5;
     const minute = totalMinutesFrom5AM % 60;
     const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-
-    setTasks(prev => prev.map(t => 
-      t.id === dragItemRef.current.id ? { ...t, time: timeStr } : t
-    ));
+    setTasks(prev => prev.map(t => t.id === dragItemRef.current.id ? { ...t, time: timeStr } : t));
   };
 
   const handleWindowMouseUp = () => {
     window.removeEventListener('mousemove', handleWindowMouseMove);
     window.removeEventListener('mouseup', handleWindowMouseUp);
-    
     if (hasMoved.current) {
         setTasks(prev => {
            localStorage.setItem(`lifeos-tasks-day-${date}`, JSON.stringify(prev));
@@ -155,7 +171,6 @@ const DailyTimeline = ({ date, onBack }) => {
           {tasks.map(task => {
             const [h, m] = task.time.split(':').map(Number);
             if (h < 5) return null;
-            
             const startMinutes = (h - 5) * 60 + m;
             const top = startMinutes * PIXELS_PER_MINUTE;
             const height = task.duration * PIXELS_PER_MINUTE;
@@ -171,13 +186,13 @@ const DailyTimeline = ({ date, onBack }) => {
                 className={`absolute left-0 right-0 rounded-lg px-3 border-l-4 shadow-sm cursor-pointer transition-all
                   ${isDragging && dragItemRef.current?.id === task.id ? 'z-50 shadow-2xl opacity-90 scale-[1.02]' : 'z-10'}
                   ${isBlue ? 'bg-blue-50 border-blue-500 text-slate-700' : 'bg-green-50 border-green-500 text-slate-700'}
-                  ${task.done ? 'opacity-60 grayscale' : ''} // ✅ 完成后变灰
+                  ${task.done ? 'opacity-60 grayscale' : ''} 
                   hover:brightness-95 hover:shadow-md flex flex-col justify-center overflow-hidden pr-10
                 `}
               >
-                {/* 🟢 恢复：右上角的打卡按钮 (绝对定位，防止挤压文字) */}
+                {/* 🟢 4. 关键：这里的 onClick 绑定的是 handleCheckClick */}
                 <div 
-                    onClick={(e) => toggleTaskDone(e, task)}
+                    onClick={(e) => handleCheckClick(e, task)}
                     className="absolute top-2 right-2 p-2 -m-2 z-20 hover:scale-110 transition-transform cursor-pointer"
                 >
                     {task.done ? (
@@ -187,7 +202,6 @@ const DailyTimeline = ({ date, onBack }) => {
                     )}
                 </div>
 
-                {/* 智能排版 */}
                 {isShort ? (
                     <div className="flex items-center gap-2">
                         <span className={`text-[10px] font-bold font-mono ${isBlue?'text-blue-500':'text-green-600'}`}>{task.time}</span>
@@ -218,34 +232,59 @@ const DailyTimeline = ({ date, onBack }) => {
         </div>
       </div>
 
-      <button 
-        onClick={handleAddTask}
-        className="absolute bottom-6 right-6 w-14 h-14 bg-slate-800 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-700 active:scale-90 z-30"
-      >
-        <Plus size={28} />
-      </button>
+      <button onClick={handleAddTask} className="absolute bottom-6 right-6 w-14 h-14 bg-slate-800 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-slate-700 active:scale-90 z-30"><Plus size={28} /></button>
 
+      {/* 🟢 5. 复盘弹窗 UI 组件 (必须在 return 里) */}
+      {checkinTask && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fadeIn p-6">
+            <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 animate-slideUp">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                        <CheckSquare size={24} className="text-green-500"/> 完成任务
+                    </h3>
+                    <button onClick={() => setCheckinTask(null)} className="p-2 bg-slate-50 rounded-full text-slate-400">
+                        <X size={20} />
+                    </button>
+                </div>
+                
+                <div className="mb-4">
+                    <p className="text-sm text-slate-500 font-bold mb-1">任务内容</p>
+                    <div className="text-lg font-black text-slate-800">{checkinTask.text}</div>
+                </div>
+
+                <div className="mb-6">
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
+                        <MessageSquare size={12}/> 简单复盘 (可选)
+                    </label>
+                    <textarea 
+                        value={reviewText}
+                        onChange={(e) => setReviewText(e.target.value)}
+                        placeholder="做得怎么样？有什么想法？"
+                        className="w-full h-24 bg-slate-50 p-4 rounded-xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-green-200 resize-none"
+                    />
+                </div>
+
+                <button 
+                    onClick={confirmCheckin}
+                    className="w-full py-3 bg-green-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-green-600 transition-colors shadow-lg shadow-green-200"
+                >
+                    <Check size={20} strokeWidth={3}/> 确认打卡
+                </button>
+            </div>
+        </div>
+      )}
+
+      {/* 普通编辑弹窗 */}
       {editingTask && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/20 backdrop-blur-sm animate-fadeIn">
           <div className="absolute inset-0" onClick={() => setEditingTask(null)}></div>
           <div className="bg-white w-full max-w-md rounded-t-3xl shadow-2xl p-6 animate-slideUp z-50">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-black text-slate-800">编辑任务</h3>
-              <div className="flex gap-2">
-                  {/* 🟢 恢复：编辑面板里的打卡按钮 */}
-                  <button 
-                    onClick={() => handleUpdateTask(editingTask.id, { done: !editingTask.done })}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${editingTask.done ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}
-                  >
-                    {editingTask.done ? <CheckSquare size={14}/> : <Square size={14}/>}
-                    {editingTask.done ? '已完成' : '未完成'}
-                  </button>
-                  <button onClick={() => setEditingTask(null)} className="p-2 bg-slate-50 rounded-full text-slate-400">
-                    <X size={20} />
-                  </button>
-              </div>
+              <button onClick={() => setEditingTask(null)} className="p-2 bg-slate-50 rounded-full text-slate-400">
+                <X size={20} />
+              </button>
             </div>
-            
             <div className="space-y-6">
               <div>
                 <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">任务内容</label>
